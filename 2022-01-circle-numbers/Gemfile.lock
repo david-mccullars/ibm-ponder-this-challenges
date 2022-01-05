@@ -1,0 +1,12 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    parallel (1.21.0)
+    ruby-progressbar (1.11.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  parallel
+  ruby-progressbar
