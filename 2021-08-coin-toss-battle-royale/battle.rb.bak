@@ -1,0 +1,216 @@
+class BattleGraph
+
+  def initialize(*coins)
+    @coins = coins
+    @graph = {}
+    @cycles = {}
+    build_graph
+    @cycle_lookup = @cycles.keys.each_with_object({}) do |cycle, h|
+      cycle.each do |n|
+        h[n] ||= []
+        h[n] << cycle
+      end
+    end
+  end
+
+  def start_node
+    @coins.size.times.to_a
+  end
+
+  def build_graph(n = start_node, *path)
+    if cycle_end = path.index(n)
+      add_cycle(path[0 .. cycle_end])
+      return
+    end
+
+    n0, *n_rest = n
+    @graph[n] = {}
+
+    if @coins[n0] > 0.0
+      n_win = n_rest - [biggest_threat(n_rest)] + [n0]
+      @graph[n][n_win] = @coins[n0]
+      build_graph(n_win, n, *path) if n_win.size > 1
+    end
+
+    if @coins[n0] < 1.0
+      n_lose = n_rest + [n0]
+      @graph[n][n_lose] = (1.0 - @coins[n0]).round(8)
+      build_graph(n_lose, n, *path)
+    end
+
+    nil
+  end
+
+  def biggest_threat(n)
+    n.each_with_index.sort_by do |threat, position|
+      [-@coins[threat], position]
+    end.first.first
+  end
+
+  def add_cycle(nodes)
+    prob = (nodes + [nodes[0]]).each_cons(2).map do |n2, n1|
+      @graph.dig(n1, n2)
+    end.reduce(&:*)
+    @cycles[nodes.sort] = 1 / (1 - prob) # Infinite sum of geometric series
+  end
+
+=begin
+  def exit_probabilities(
+a = [0.5, 0.2, 0.05, 0.85, 0.1, 1.0, 0.0]
+not_a = [1.0] + a.map { |i| (1.0 - i) }
+
+cycle_mult = (1.0 / (1.0 - not_a.reduce(&:*)))
+
+probs = a.each_with_index.map do |prob, i|
+  (prob * not_a[0..i].reduce(&:*) * cycle_mult).round(8)
+end
+
+p probs
+p probs.reduce(&:+)
+=end
+
+
+
+
+
+
+
+  def win_probabilities
+    sums = Hash.new { 0 }
+    each_path do |player, prob|
+      sums[player] += prob
+    end
+    sums.sort_by(&:last).to_h
+  end
+
+  def each_path(prob = 1.0, n = start_node, *path, &block)
+    if n.size == 1
+pp = prob
+      prob = apply_cycles(prob, path, n == [0])
+puts "PATH #{pp} -> #{prob} ... #{path.reverse[1..].map { |x| x.join(',') }.join(' | ')}" if n == [0]
+      yield n.first, prob if block_given?
+    elsif path.include?(n)
+      # Ignore cycle
+    else
+      @graph[n].each do |n2, prob2|
+        each_path(prob * prob2, n2, n, *path, &block)
+      end
+    end
+    nil
+  end
+
+  def apply_cycles(prob, path, test)
+    @cycle_lookup.values_at(*path).compact.uniq.flatten(1).each do |cycle|
+      prob2 = @cycles[cycle]
+p [:APPLY_CYCLE, prob2, '...', cycle] if test
+      prob *= prob2
+    end
+    prob
+  end
+
+  def sigma_c
+    @sigma_c ||= @coins.each_with_index.sort.map(&:last)
+  end
+
+  def sigma_w
+    @sigma_w ||= win_probabilities.each_with_index.map { |(player, prob), rank| [player, rank] }.sort.map(&:last)
+  end
+
+  def fair?
+    sigma_c == sigma_w
+  end
+
+  def subgraph(g = {}, n = start_node, *path, &block)
+    if n.size == 1
+      return unless yield n.first
+      @cycle_lookup.values_at(*path).compact.uniq.flatten(1).each do |cycle|
+        (cycle + [cycle.first]).each_cons(2) do |n2, n3|
+          g[n2] ||= {}
+          g[n2][n3] = @graph[n2][n3]
+        end 
+      end
+      [n, *path].each_cons(2) do |n2, n1|
+        g[n1] ||= {}
+        g[n1][n2] = @graph[n1][n2]
+      end
+    elsif path.include?(n)
+      # Ignore cycle
+    else
+      @graph[n].each do |n2, prob2|
+        subgraph(g, n2, n, *path, &block)
+      end
+    end
+    g
+  end
+
+  def dump(file)
+    require 'graphviz' unless defined? GraphViz
+    g = GraphViz.new(:G, type: :digraph)
+    subgraph { |n| n == 0 }.each do |n1, h|
+#    @graph.each do |n1, h|
+      node1 = g.add_nodes(n1.join(','))
+      h.each do |n2, prob|
+        node2 = g.add_nodes(n2.join(','))
+        g.add_edges(node1, node2, label: prob)
+      end
+    end
+    g.output(png: file)
+    nil
+  end
+
+end
+
+=begin
+a = [0.5, 0.2, 0.05, 0.85, 0.1, 1.0, 0.0]
+not_a = [1.0] + a.map { |i| (1.0 - i) }
+
+cycle_mult = (1.0 / (1.0 - not_a.reduce(&:*)))
+
+probs = a.each_with_index.map do |prob, i|
+  (prob * not_a[0..i].reduce(&:*) * cycle_mult).round(8)
+end
+
+p probs
+p probs.reduce(&:+)
+=end
+
+incoming = [0.3, 0.2, 0.1] # sum <= 1.0
+outgoing = [0.5, 0.2, 0.05]
+in_cycle = outgoing.map { |i| (1.0 - i) }
+in_cycle_x2 = in_cycle + in_cycle # Helps with overlapping iterators
+cycle_mult = (1.0 / (1.0 - in_cycle.reduce(&:*)))
+
+probs = outgoing.each_with_index.map do |outgoing_prob, j|
+  incoming.each_with_index.map do |incoming_prob, i|
+    i_to_j_prob = in_cycle_x2[i ... (j < i ? j + in_cycle.size : j)].reduce(&:*) || 1.0
+    incoming_prob * outgoing_prob * cycle_mult * i_to_j_prob
+  end.reduce(&:+)
+#  (prob * not_a[0..i].reduce(&:*) * cycle_mult).round(8)
+end
+
+p probs
+p probs.reduce(&:+)
+
+
+
+
+__END__
+
+=begin
+b = BattleGraph.new(0.25, 0.5, 0.25)
+p b.sigma_c
+p b.sigma_w
+p b.fair?
+puts "==========="
+b = BattleGraph.new(0.25, 0.5, 1.0)
+p b.sigma_c
+p b.sigma_w
+p b.fair?
+puts "==========="
+=end
+b = BattleGraph.new(0.5, 0.2, 0.05, 0.85, 0.1)
+#p b.win_probabilities
+p b.sigma_c
+p b.sigma_w
+p b.fair?
+b.dump(ARGV.first) if ARGV.first
